@@ -9,9 +9,8 @@ and uses some of its parts.
 The API is heavily inspired by Android 
 [ImageDecoder](https://developer.android.com/reference/android/graphics/ImageDecoder).
 
----
 
-## ✨ Features
+## Features
 
 - Compress videos using hardware-accelerated codecs
   via [MediaCodec](https://developer.android.com/reference/android/media/MediaCodec)
@@ -19,7 +18,6 @@ The API is heavily inspired by Android
 - Coroutines and cancellation
 - Compatible with Android 5.0+ (API 21+)
 
----
 
 ## Usage
 
@@ -69,13 +67,11 @@ scope.launch {
 }
 ```
 
----
 
 ## Compatibility
 
 Minimum Android SDK: LightCompressor requires a minimum API level of 21.
 
----
 
 ## What's next?
 
