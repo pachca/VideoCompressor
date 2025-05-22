@@ -47,16 +47,6 @@ import java.nio.ByteBuffer
 
 class VideoCompressor private constructor(private val input: File) {
 
-    private var _rotation: Int = DEFAULT_USE_SOURCE
-    var rotation: Int
-        get() = _rotation
-        set(value) {
-            require(value == 0 || value == 180 || value == 270 || value == 300) {
-
-            }
-            _rotation = value
-        }
-
     private var _width: Int = DEFAULT_USE_SOURCE
     var width: Int
         get() = _width
@@ -91,14 +81,11 @@ class VideoCompressor private constructor(private val input: File) {
 
     @Suppress("DEPRECATION")
     private suspend fun compress(context: Context, metadata: Metadata, output: File) = runAsResult {
-        if (_rotation == DEFAULT_USE_SOURCE)
-            _rotation = metadata.rotation
-
         if (_width == DEFAULT_USE_SOURCE)
-            _width = metadata.actualWidth
+            _width = metadata.width
 
         if (_height == DEFAULT_USE_SOURCE)
-            _height = metadata.actualHeight
+            _height = metadata.height
 
         val cache = File(context.cacheDir, input.name)
 
@@ -111,7 +98,7 @@ class VideoCompressor private constructor(private val input: File) {
             val bufferInfo = MediaCodec.BufferInfo()
 
             // Setup mp4 movie
-            val movie = setUpMP4Movie(_rotation, cache)
+            val movie = setUpMP4Movie(0, cache)
 
             // MediaMuxer outputs MP4 in this app
             val mediaMuxer = MP4Builder().createMovie(movie)
@@ -129,9 +116,8 @@ class VideoCompressor private constructor(private val input: File) {
             setOutputFileParameters(
                 inputFormat,
                 outputFormat,
-                _bitrate / 8,
+                _bitrate,
             )
-
 
             val hasQTI = hasQTI()
             val encoder = prepareEncoder(outputFormat, hasQTI)

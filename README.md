@@ -6,7 +6,7 @@ A lightweight Android library for compressing video files using `MediaCodec`.
 
 Based on the [LightCompressor](https://github.com/AbedElazizShe/LightCompressor) 
 and uses some of its parts.
-The API is heavily inspired by Android 
+The API is inspired by Android 
 [ImageDecoder](https://developer.android.com/reference/android/graphics/ImageDecoder).
 
 
@@ -57,6 +57,7 @@ scope.launch {
             compressor.height = metadata.height / 2
             compressor.width = metadata.width / 2
 
+            // Must be bits/sec, but encoder can somewhat adjust this value
             compressor.bitrate = 2_000_000
             compressor.streamable = true
 
@@ -70,7 +71,7 @@ scope.launch {
 
 ## Compatibility
 
-Minimum Android SDK: LightCompressor requires a minimum API level of 21.
+Minimum Android SDK: VideoCompressor requires a minimum API level of 21.
 
 
 ## What's next?
@@ -84,5 +85,6 @@ Minimum Android SDK: LightCompressor requires a minimum API level of 21.
 ## Credits
 
 [Telegram](https://github.com/DrKLO/Telegram) for Android.
+
 [LightCompressor](https://github.com/AbedElazizShe/LightCompressor) - original library.
 

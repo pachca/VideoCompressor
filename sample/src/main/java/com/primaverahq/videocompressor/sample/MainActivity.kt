@@ -89,13 +89,13 @@ class MainActivity : ComponentActivity() {
                             input = input,
                             output = output,
                             onMetadataDecoded = { compressor, metadata ->
-                                val maxDimension = max(metadata.width, metadata.height)
+                                val maxDimension = max(metadata.actualHeight, metadata.actualWidth)
                                 val ratio = 1280f / maxDimension
 
                                 compressor.height = (metadata.actualHeight * ratio).toInt()
                                 compressor.width = (metadata.actualWidth * ratio).toInt()
 
-                                compressor.bitrate = 2_000_000
+                                compressor.bitrate = 4_000_000
                                 compressor.streamable = true
 
                                 true
