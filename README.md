@@ -36,7 +36,7 @@ Add this to your app `build.gradle.kts`:
 
 ```kotlin
 dependencies {
-    implementation("com.github.primaverahq:VideoCompressor:2.0.0")
+    implementation("com.github.primaverahq:VideoCompressor:v2.0.1")
 }
 ```
 
