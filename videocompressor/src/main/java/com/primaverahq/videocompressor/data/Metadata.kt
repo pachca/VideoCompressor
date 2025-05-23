@@ -22,7 +22,8 @@ import android.util.Size
 class Metadata(
     internal val width: Int,
     internal val height: Int,
-    internal val rotation: Int
+    internal val rotation: Int,
+    val bitrate: Int
 ) {
     val actualWidth: Int get() =
         if (rotation == 90 || rotation == 270) height else width

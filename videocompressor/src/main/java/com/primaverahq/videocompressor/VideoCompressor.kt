@@ -369,8 +369,12 @@ class VideoCompressor private constructor(private val input: File) {
             .extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)
             ?.toIntOrNull()
             ?: -1
+        val bitrate = retriever
+            .extractMetadata(MediaMetadataRetriever.METADATA_KEY_BITRATE)
+            ?.toIntOrNull()
+            ?: -1
 
-        return Metadata(width, height, rotation)
+        return Metadata(width, height, rotation, bitrate)
     }
 
     private fun processAudio(
