@@ -32,6 +32,7 @@ import android.os.Build
 import android.util.Log
 import com.primaverahq.videocompressor.data.Metadata
 import com.primaverahq.videocompressor.settings.CompressionSettings
+import com.primaverahq.videocompressor.settings.EncoderSelectionMode
 import com.primaverahq.videocompressor.utils.CompressorUtils
 import com.primaverahq.videocompressor.utils.CompressorUtils.findTrack
 import com.primaverahq.videocompressor.utils.CompressorUtils.setUpMP4Movie
@@ -55,7 +56,7 @@ class VideoCompressor private constructor(private val input: File) {
     ) = runAsResult {
         val cache = File(context.cacheDir, input.name)
 
-        val encoders = findEncoders()
+        val encoders = selectEncoders(settings.encoderSelectionMode)
 
         val errors = encoders.associate { name ->
             try {
@@ -72,12 +73,18 @@ class VideoCompressor private constructor(private val input: File) {
         throw errors.toList().last().second
     }
 
-    private fun findEncoders(): List<String> {
-        return MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos
+    private fun selectEncoders(mode: EncoderSelectionMode): List<String> {
+        val codecs = MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos
             .filter {
                 it.isEncoder && it.supportedTypes.contains("video/avc")
             }
             .map { it.name }
+
+        return when (mode) {
+            // Take the first on the list
+            EncoderSelectionMode.DEFAULT -> codecs.take(1)
+            EncoderSelectionMode.TRY_ALL -> codecs
+        }
     }
 
     private suspend fun attemptCompression(
