@@ -22,6 +22,7 @@
  */
 package com.primaverahq.videocompressor.utils
 
+import android.media.MediaCodec
 import android.media.MediaCodecInfo
 import android.media.MediaCodecList
 import android.media.MediaExtractor
@@ -29,10 +30,12 @@ import android.media.MediaFormat
 import android.os.Build
 import android.util.Log
 import androidx.annotation.RequiresApi
+import com.primaverahq.videocompressor.settings.CompressionSettings
 import com.primaverahq.videocompressor.video.Mp4Movie
 import java.io.File
+import kotlin.math.min
 
-object CompressorUtils {
+internal object CompressorUtils {
 
     // 1 second between I-frames
     private const val I_FRAME_INTERVAL = 1
@@ -50,95 +53,157 @@ object CompressorUtils {
         return movie
     }
 
+
     /**
-     * Set output parameters like bitrate and frame rate
+     * Creates and configures a MediaFormat for video compression based on input parameters.
+     *
+     * This handles:
+     * - Dimension adjustment (if [CompressionSettings.allowSizeAdjustments] is true)
+     * - Bitrate configuration
+     * - Frame rate and keyframe interval preservation
+     * - Color format and standards setup
+     * - Codec profile selection
+     *
+     * NOTE: This implementation intentionally avoids constrained profiles
+     * AVCProfileConstrainedHigh and AVCProfileConstrainedBaseline
+     * even when supported by the encoder.
+     *
+     * The output format is specifically configured for encoder compatibility,
+     * making adjustments when necessary to meet codec requirements.
+     *
+     * @param encoder The MediaCodec encoder instance that will be used
+     * @param inputFormat The source video's MediaFormat containing original parameters
+     * @param settings Compression configuration including target dimensions and bitrate
+     * @return A fully configured MediaFormat ready for encoder configuration
+     *
+     * @see adjustVideoDimensions For details on size adjustment logic
+     * @see MediaCodecInfo.VideoCapabilities For supported encoder constraints
      */
-    fun setOutputFileParameters(
+    fun createOutputFormat(
+        encoder: MediaCodec,
         inputFormat: MediaFormat,
-        outputFormat: MediaFormat,
-        newBitrate: Int
-    ) {
-        val newFrameRate = getFrameRate(inputFormat)
-        val iFrameInterval = getIFrameIntervalRate(inputFormat)
-        outputFormat.apply {
+        settings: CompressionSettings
+    ): MediaFormat {
+        val capabilities = encoder.codecInfo.getCapabilitiesForType("video/avc")
+        val videoCapabilities = capabilities.videoCapabilities
 
-            // according to https://developer.android.com/media/optimize/sharing#b-frames_and_encoding_profiles
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                val type = outputFormat.getString(MediaFormat.KEY_MIME)
-                val higherLevel = getHighestCodecProfileLevel(type)
-                Log.i("Output file parameters", "Selected CodecProfileLevel: $higherLevel")
-                setInteger(MediaFormat.KEY_PROFILE, higherLevel)
-            } else {
-                setInteger(MediaFormat.KEY_PROFILE, MediaCodecInfo.CodecProfileLevel.AVCProfileBaseline)
-            }
-
-            setInteger(
-                MediaFormat.KEY_COLOR_FORMAT,
-                MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface
+        val (width, height) = if (settings.allowSizeAdjustments)
+            adjustVideoDimensions(
+                targetWidth = settings.width,
+                targetHeight = settings.height,
+                videoCapabilities = videoCapabilities
             )
+        else
+            settings.width to settings.height
 
-            setInteger(MediaFormat.KEY_FRAME_RATE, newFrameRate)
-            setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, iFrameInterval)
-            // expected bps
-            setInteger(MediaFormat.KEY_BIT_RATE, newBitrate)
-            setInteger(
-                MediaFormat.KEY_BITRATE_MODE,
-                MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CBR
-            )
+        // Create basic format
+        val outputFormat = MediaFormat.createVideoFormat("video/avc", width, height)
 
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                getColorStandard(inputFormat)?.let {
-                    setInteger(MediaFormat.KEY_COLOR_STANDARD, it)
-                }
+        outputFormat.setInteger(MediaFormat.KEY_BIT_RATE, settings.bitrate)
+        outputFormat.setInteger(
+            MediaFormat.KEY_BITRATE_MODE,
+            MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CBR
+        )
 
-                getColorTransfer(inputFormat)?.let {
-                    setInteger(MediaFormat.KEY_COLOR_TRANSFER, it)
-                }
+        outputFormat.setInteger(MediaFormat.KEY_FRAME_RATE, getFrameRate(inputFormat))
+        outputFormat.setInteger(
+            MediaFormat.KEY_I_FRAME_INTERVAL,
+            getIFrameIntervalRate(inputFormat)
+        )
 
-                getColorRange(inputFormat)?.let {
-                    setInteger(MediaFormat.KEY_COLOR_RANGE, it)
-                }
-            }
-
-
-            Log.i(
-                "Output file parameters",
-                "videoFormat: $this"
-            )
+        outputFormat.setInteger(
+            MediaFormat.KEY_COLOR_FORMAT,
+            MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface
+        )
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            outputFormat.setInteger(MediaFormat.KEY_COLOR_STANDARD, getColorStandard(inputFormat))
+            outputFormat.setInteger(MediaFormat.KEY_COLOR_TRANSFER, getColorTransfer(inputFormat))
+            outputFormat.setInteger(MediaFormat.KEY_COLOR_RANGE, getColorRange(inputFormat))
         }
+
+        val profile = encoder.codecInfo
+            .getCapabilitiesForType("video/avc")
+            .profileLevels
+            .map { it.profile }
+            .filter { it <= MediaCodecInfo.CodecProfileLevel.AVCProfileHigh444 }
+            .max()
+
+        outputFormat.setInteger(MediaFormat.KEY_PROFILE, profile)
+
+        return outputFormat
+    }
+
+    /**
+     * Adjusts video dimensions to meet encoder alignment and range requirements.
+     *
+     * Handles two key constraints:
+     * 1. Dimensions must be within the encoder's supported ranges
+     * 2. Dimensions must be multiples of the encoder's alignment requirements
+     *
+     * Note: Does not currently preserve aspect ratio (planned for future update).
+     * Some advanced encoder constraints (block-level requirements) cannot be checked
+     * through public APIs.
+     *
+     * @param targetWidth Desired output width before adjustments
+     * @param targetHeight Desired output height before adjustments
+     * @param videoCapabilities Encoder's supported capabilities
+     * @return Pair of (adjustedWidth, adjustedHeight) meeting basic encoder requirements
+     */
+    private fun adjustVideoDimensions(
+        targetWidth: Int,
+        targetHeight: Int,
+        videoCapabilities: MediaCodecInfo.VideoCapabilities
+    ): Pair<Int, Int> {
+        // 1. Coerce to supported ranges
+        val coercedWidth = targetWidth.coerceIn(
+            videoCapabilities.supportedWidths.lower,
+            videoCapabilities.supportedWidths.upper
+        )
+        val coercedHeight = targetHeight.coerceIn(
+            videoCapabilities.supportedHeights.lower,
+            videoCapabilities.supportedHeights.upper
+        )
+
+        // 2. Align to encoder requirements
+        val widthAlignment = videoCapabilities.widthAlignment
+        val heightAlignment = videoCapabilities.heightAlignment
+        val adjustedWidth = (coercedWidth / widthAlignment) * widthAlignment
+        val adjustedHeight = (coercedHeight / heightAlignment) * heightAlignment
+
+        return adjustedWidth to adjustedHeight
     }
 
     private fun getFrameRate(format: MediaFormat): Int {
-        return if (format.containsKey(MediaFormat.KEY_FRAME_RATE)) format.getInteger(MediaFormat.KEY_FRAME_RATE)
+        return if (format.containsKey(MediaFormat.KEY_FRAME_RATE))
+            format.getInteger(MediaFormat.KEY_FRAME_RATE)
         else 30
     }
 
     private fun getIFrameIntervalRate(format: MediaFormat): Int {
-        return if (format.containsKey(MediaFormat.KEY_I_FRAME_INTERVAL)) format.getInteger(
-            MediaFormat.KEY_I_FRAME_INTERVAL
-        )
+        return if (format.containsKey(MediaFormat.KEY_I_FRAME_INTERVAL))
+            format.getInteger(MediaFormat.KEY_I_FRAME_INTERVAL)
         else I_FRAME_INTERVAL
     }
 
     @RequiresApi(Build.VERSION_CODES.N)
-    private fun getColorStandard(format: MediaFormat): Int? {
+    private fun getColorStandard(format: MediaFormat): Int {
         return if (format.containsKey(MediaFormat.KEY_COLOR_STANDARD))
             format.getInteger(MediaFormat.KEY_COLOR_STANDARD)
-        else null
+        else 0
     }
 
     @RequiresApi(Build.VERSION_CODES.N)
-    private fun getColorTransfer(format: MediaFormat): Int? {
+    private fun getColorTransfer(format: MediaFormat): Int {
         return if (format.containsKey(MediaFormat.KEY_COLOR_TRANSFER))
             format.getInteger(MediaFormat.KEY_COLOR_TRANSFER)
-        else null
+        else 0
     }
 
     @RequiresApi(Build.VERSION_CODES.N)
-    private fun getColorRange(format: MediaFormat): Int? {
+    private fun getColorRange(format: MediaFormat): Int {
         return if (format.containsKey(MediaFormat.KEY_COLOR_RANGE))
             format.getInteger(MediaFormat.KEY_COLOR_RANGE)
-        else null
+        else 0
     }
 
     /**
@@ -159,40 +224,5 @@ object CompressorUtils {
             }
         }
         return -5
-    }
-
-    fun hasQTI(): Boolean {
-        val list = MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos
-        for (codec in list) {
-            Log.i("CODECS: ", codec.name)
-            if (codec.name.contains("qti.avc")) {
-                return true
-            }
-        }
-        return false
-    }
-
-    /**
-     * Get the highest profile level supported by the AVC encoder: High > Main > Baseline
-     */
-    private fun getHighestCodecProfileLevel(type: String?): Int {
-        if (type == null) {
-            return MediaCodecInfo.CodecProfileLevel.AVCProfileBaseline
-        }
-        val list = MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos
-        val capabilities = list
-            .filter { codec -> type in codec.supportedTypes && codec.name.contains("encoder") }
-            .mapNotNull { codec -> codec.getCapabilitiesForType(type) }
-
-        capabilities.forEach { capabilitiesForType ->
-            val levels =  capabilitiesForType.profileLevels.map { it.profile }
-            return when {
-                MediaCodecInfo.CodecProfileLevel.AVCProfileHigh in levels -> MediaCodecInfo.CodecProfileLevel.AVCProfileHigh
-                MediaCodecInfo.CodecProfileLevel.AVCProfileMain in levels -> MediaCodecInfo.CodecProfileLevel.AVCProfileMain
-                else -> MediaCodecInfo.CodecProfileLevel.AVCProfileBaseline
-            }
-        }
-
-        return MediaCodecInfo.CodecProfileLevel.AVCProfileBaseline
     }
 }

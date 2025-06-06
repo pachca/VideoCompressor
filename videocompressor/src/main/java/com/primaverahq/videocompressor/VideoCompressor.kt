@@ -24,15 +24,16 @@ package com.primaverahq.videocompressor
 
 import android.content.Context
 import android.media.MediaCodec
+import android.media.MediaCodecList
 import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.media.MediaMetadataRetriever
 import android.os.Build
 import android.util.Log
 import com.primaverahq.videocompressor.data.Metadata
+import com.primaverahq.videocompressor.settings.CompressionSettings
+import com.primaverahq.videocompressor.utils.CompressorUtils
 import com.primaverahq.videocompressor.utils.CompressorUtils.findTrack
-import com.primaverahq.videocompressor.utils.CompressorUtils.hasQTI
-import com.primaverahq.videocompressor.utils.CompressorUtils.setOutputFileParameters
 import com.primaverahq.videocompressor.utils.CompressorUtils.setUpMP4Movie
 import com.primaverahq.videocompressor.utils.StreamableVideo
 import com.primaverahq.videocompressor.video.InputSurface
@@ -47,98 +48,98 @@ import java.nio.ByteBuffer
 
 class VideoCompressor private constructor(private val input: File) {
 
-    private var _width: Int = DEFAULT_USE_SOURCE
-    var width: Int
-        get() = _width
-        set(value) {
-            require(value > 0) {
-
-            }
-            _width = value
-        }
-
-    private var _height: Int = DEFAULT_USE_SOURCE
-    var height: Int
-        get() = _height
-        set(value) {
-            require(value > 0) {
-
-            }
-            _height = value
-        }
-
-    private var _bitrate: Int = DEFAULT_BITRATE
-    var bitrate: Int
-        get() = _bitrate
-        set(value) {
-            require(value > 0) {
-
-            }
-            _bitrate = value
-        }
-
-    var streamable: Boolean = DEFAULT_STREAMABLE
-
-    @Suppress("DEPRECATION")
-    private suspend fun compress(context: Context, metadata: Metadata, output: File) = runAsResult {
-        if (_width == DEFAULT_USE_SOURCE)
-            _width = metadata.width
-
-        if (_height == DEFAULT_USE_SOURCE)
-            _height = metadata.height
-
+    private suspend fun compress(
+        context: Context,
+        settings: CompressionSettings,
+        output: File
+    ) = runAsResult {
         val cache = File(context.cacheDir, input.name)
 
-        withContext(Dispatchers.Default) {
-            val extractor = MediaExtractor()
-            extractor.setDataSource(input.absolutePath, null)
+        val encoders = findEncoders()
 
-            // MediaCodec accesses encoder and decoder components and processes the new video
-            //input to generate a compressed/smaller size video
-            val bufferInfo = MediaCodec.BufferInfo()
+        val errors = encoders.associate { name ->
+            try {
+                attemptCompression(settings, name, cache)
+                processOutputFile(settings, cache, output)
 
-            // Setup mp4 movie
-            val movie = setUpMP4Movie(0, cache)
+                return@runAsResult
+            } catch (e: Exception) {
+                return@associate name to e
+            }
+        }
 
-            // MediaMuxer outputs MP4 in this app
-            val mediaMuxer = MP4Builder().createMovie(movie)
+        // TODO: improve error propagation to calling code
+        throw errors.toList().last().second
+    }
 
-            // Start with video track
-            val videoIndex = findTrack(extractor, isVideo = true)
+    private fun findEncoders(): List<String> {
+        return MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos
+            .filter {
+                it.isEncoder && it.supportedTypes.contains("video/avc")
+            }
+            .map { it.name }
+    }
 
-            extractor.selectTrack(videoIndex)
-            extractor.seekTo(0, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
-            val inputFormat = extractor.getTrackFormat(videoIndex)
+    private suspend fun attemptCompression(
+        settings: CompressionSettings,
+        codecName: String,
+        cache: File
+    ) {
+        val extractor = MediaExtractor().apply {
+            setDataSource(input.absolutePath, null)
+        }
 
-            val outputFormat: MediaFormat =
-                MediaFormat.createVideoFormat(MIME_TYPE, _width, _height)
-            //set output format
-            setOutputFileParameters(
-                inputFormat,
-                outputFormat,
-                _bitrate,
-            )
+        val mediaMuxer = MP4Builder().createMovie(setUpMP4Movie(0, cache))
 
-            val hasQTI = hasQTI()
-            val encoder = prepareEncoder(outputFormat, hasQTI)
+        try {
+            processVideo(codecName, settings, extractor, mediaMuxer)
+            processAudio(extractor, mediaMuxer)
+
+            mediaMuxer.finishMovie()
+        } catch (e: Exception) {
+            cache.delete()
+            throw e
+        } finally {
+            extractor.release()
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private suspend fun processVideo(
+        codecName: String?,
+        settings: CompressionSettings,
+        extractor: MediaExtractor,
+        mediaMuxer: MP4Builder
+    ) = withContext(Dispatchers.Default) {
+        val videoIndex = findTrack(extractor, isVideo = true)
+
+        extractor.selectTrack(videoIndex)
+        extractor.seekTo(0, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
+
+        val inputFormat = extractor.getTrackFormat(videoIndex)
+
+        val bufferInfo = MediaCodec.BufferInfo()
+
+        var decoder: MediaCodec? = null
+        var encoder: MediaCodec? = null
+        var inputSurface: InputSurface? = null
+        var outputSurface: OutputSurface? = null
+
+        try {
+            encoder = createVideoEncoder(inputFormat, settings, codecName)
+            inputSurface = InputSurface(encoder.createInputSurface()).apply { makeCurrent() }
+            outputSurface = OutputSurface()
+            decoder = createVideoDecoder(inputFormat, outputSurface)
+
+            encoder.start()
+            decoder.start()
 
             var inputDone = false
             var outputDone = false
 
             var videoTrackIndex = -5
 
-            val inputSurface = InputSurface(encoder.createInputSurface())
-            inputSurface.makeCurrent()
-            val outputSurface = OutputSurface()
-
-            //Move to executing state
-            encoder.start()
-
-            val decoder = prepareDecoder(inputFormat, outputSurface)
-
-            //Move to executing state
-            decoder.start()
-
+            // encoding loop
             while (!outputDone) {
                 if (!inputDone) {
 
@@ -200,15 +201,7 @@ class VideoCompressor private constructor(private val input: File) {
                 loop@ while (decoderOutputAvailable || encoderOutputAvailable) {
 
                     if (!isActive) {
-                        dispose(
-                            decoder = decoder,
-                            encoder = encoder,
-                            inputSurface = inputSurface,
-                            outputSurface = outputSurface,
-                            extractor = extractor
-                        )
-
-                        return@withContext
+                        throw CancellationException()
                     }
 
                     //Encoder
@@ -304,51 +297,119 @@ class VideoCompressor private constructor(private val input: File) {
                 }
             }
 
-            extractor.unselectTrack(videoIndex)
-
-            dispose(
-                decoder = decoder,
-                encoder = encoder,
-                inputSurface = inputSurface,
-                outputSurface = outputSurface
-            )
-
-            processAudio(
-                mediaMuxer = mediaMuxer,
-                bufferInfo = bufferInfo,
-                extractor = extractor
-            )
-
-            dispose(
-                extractor = extractor
-            )
-
-            mediaMuxer.finishMovie()
+        } finally {
+            decoder?.stop()
+            decoder?.release()
+            encoder?.stop()
+            encoder?.release()
+            inputSurface?.release()
+            outputSurface?.release()
         }
-
-        withContext(Dispatchers.IO) {
-            if (streamable) StreamableVideo.start(cache, output)
-            else cache.copyTo(output)
-
-            cache.delete()
-        }
+        extractor.unselectTrack(videoIndex)
     }
 
-    private suspend fun runAsResult(block: suspend () -> Unit): CompressionResult {
-        return runCatching {
-            block.invoke()
-            CompressionResult.Success
-        }.getOrElse { error ->
-            return when (error) {
-                is CancellationException ->
-                    CompressionResult.Cancelled
+    private suspend fun processOutputFile(
+        settings: CompressionSettings,
+        cache: File,
+        output: File
+    ) = withContext(Dispatchers.IO) {
+        if (settings.streamable)
+            StreamableVideo.start(cache, output)
+        else
+            cache.copyTo(output)
 
-                is CompressionException ->
-                    CompressionResult.Error(error)
+        cache.delete()
+    }
 
-                else ->
-                    CompressionResult.Error(CompressionException("Unknown error", error))
+    private fun createVideoEncoder(
+        inputFormat: MediaFormat,
+        settings: CompressionSettings,
+        codecName: String?
+    ): MediaCodec {
+        val encoder = codecName?.let { MediaCodec.createByCodecName(it) }
+            ?: throw IllegalStateException()
+
+        val outputFormat = CompressorUtils.createOutputFormat(encoder, inputFormat, settings)
+
+        try {
+            encoder.configure(outputFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+        } catch (e: Exception) {
+            encoder.release()
+            throw e
+        }
+        return encoder
+    }
+
+    private fun createVideoDecoder(
+        format: MediaFormat,
+        surface: OutputSurface
+    ): MediaCodec {
+        val mimeType = format.getString(MediaFormat.KEY_MIME)
+            ?: throw IllegalStateException()
+        val decoder = MediaCodec.createDecoderByType(mimeType)
+
+        try {
+            decoder.configure(format, surface.getSurface(), null, 0)
+        } catch (e: Exception) {
+            decoder.release()
+            throw e
+        }
+        return decoder
+    }
+
+    private suspend fun processAudio(
+        extractor: MediaExtractor,
+        mediaMuxer: MP4Builder
+    ) = withContext(Dispatchers.IO) {
+        val audioIndex = findTrack(extractor, isVideo = false)
+        if (audioIndex >= 0) {
+            extractor.selectTrack(audioIndex)
+            val audioFormat = extractor.getTrackFormat(audioIndex)
+            val muxerTrackIndex = mediaMuxer.addTrack(audioFormat, true)
+            var maxBufferSize = audioFormat.getInteger(MediaFormat.KEY_MAX_INPUT_SIZE)
+            val bufferInfo = MediaCodec.BufferInfo()
+
+            if (maxBufferSize <= 0) {
+                maxBufferSize = 64 * 1024
             }
+
+            var buffer = ByteBuffer.allocateDirect(maxBufferSize)
+            if (Build.VERSION.SDK_INT >= 28) {
+                val size = extractor.sampleSize
+                if (size > maxBufferSize) {
+                    maxBufferSize = (size + 1024).toInt()
+                    buffer = ByteBuffer.allocateDirect(maxBufferSize)
+                }
+            }
+            var inputDone = false
+            extractor.seekTo(0, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
+
+            while (!inputDone) {
+                if (!isActive) {
+                    throw CancellationException()
+                }
+                val index = extractor.sampleTrackIndex
+                if (index == audioIndex) {
+                    bufferInfo.size = extractor.readSampleData(buffer, 0)
+
+                    if (bufferInfo.size >= 0) {
+                        bufferInfo.apply {
+                            presentationTimeUs = extractor.sampleTime
+                            offset = 0
+                            flags = MediaCodec.BUFFER_FLAG_KEY_FRAME
+                        }
+                        mediaMuxer.writeSampleData(muxerTrackIndex, buffer, bufferInfo, true)
+                        extractor.advance()
+
+                    } else {
+                        bufferInfo.size = 0
+                        inputDone = true
+                    }
+                } else if (index == -1) {
+                    inputDone = true
+                }
+            }
+            extractor.unselectTrack(audioIndex)
         }
     }
 
@@ -377,129 +438,9 @@ class VideoCompressor private constructor(private val input: File) {
         return Metadata(width, height, rotation, bitrate)
     }
 
-    private fun processAudio(
-        mediaMuxer: MP4Builder,
-        bufferInfo: MediaCodec.BufferInfo,
-        extractor: MediaExtractor
-    ) {
-        val audioIndex = findTrack(extractor, isVideo = false)
-        if (audioIndex >= 0) {
-            extractor.selectTrack(audioIndex)
-            val audioFormat = extractor.getTrackFormat(audioIndex)
-            val muxerTrackIndex = mediaMuxer.addTrack(audioFormat, true)
-            var maxBufferSize = audioFormat.getInteger(MediaFormat.KEY_MAX_INPUT_SIZE)
-
-            if (maxBufferSize <= 0) {
-                maxBufferSize = 64 * 1024
-            }
-
-            var buffer: ByteBuffer = ByteBuffer.allocateDirect(maxBufferSize)
-            if (Build.VERSION.SDK_INT >= 28) {
-                val size = extractor.sampleSize
-                if (size > maxBufferSize) {
-                    maxBufferSize = (size + 1024).toInt()
-                    buffer = ByteBuffer.allocateDirect(maxBufferSize)
-                }
-            }
-            var inputDone = false
-            extractor.seekTo(0, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
-
-            while (!inputDone) {
-                val index = extractor.sampleTrackIndex
-                if (index == audioIndex) {
-                    bufferInfo.size = extractor.readSampleData(buffer, 0)
-
-                    if (bufferInfo.size >= 0) {
-                        bufferInfo.apply {
-                            presentationTimeUs = extractor.sampleTime
-                            offset = 0
-                            flags = MediaCodec.BUFFER_FLAG_KEY_FRAME
-                        }
-                        mediaMuxer.writeSampleData(muxerTrackIndex, buffer, bufferInfo, true)
-                        extractor.advance()
-
-                    } else {
-                        bufferInfo.size = 0
-                        inputDone = true
-                    }
-                } else if (index == -1) {
-                    inputDone = true
-                }
-            }
-            extractor.unselectTrack(audioIndex)
-        }
-    }
-
-    private fun prepareEncoder(outputFormat: MediaFormat, hasQTI: Boolean): MediaCodec {
-
-        // This seems to cause an issue with certain phones
-        // val encoderName = MediaCodecList(REGULAR_CODECS).findEncoderForFormat(outputFormat)
-        // val encoder: MediaCodec = MediaCodec.createByCodecName(encoderName)
-        // Log.i("encoderName", encoder.name)
-        // c2.qti.avc.encoder results in a corrupted .mp4 video that does not play in
-        // Mac and iphones
-        var encoder = if (hasQTI) {
-            MediaCodec.createByCodecName("c2.android.avc.encoder")
-        } else {
-            MediaCodec.createEncoderByType(MIME_TYPE)
-        }
-
-        try {
-            encoder.configure(
-                outputFormat, null, null,
-                MediaCodec.CONFIGURE_FLAG_ENCODE
-            )
-        } catch (_: Exception) {
-            encoder = MediaCodec.createEncoderByType(MIME_TYPE)
-            encoder.configure(
-                outputFormat, null, null,
-                MediaCodec.CONFIGURE_FLAG_ENCODE
-            )
-        }
-
-        return encoder
-    }
-
-    private fun prepareDecoder(
-        inputFormat: MediaFormat,
-        outputSurface: OutputSurface,
-    ): MediaCodec {
-        val decoder = MediaCodec.createDecoderByType(inputFormat.getString(MediaFormat.KEY_MIME)!!)
-
-        decoder.configure(inputFormat, outputSurface.getSurface(), null, 0)
-
-        return decoder
-    }
-
-    private fun dispose(
-        decoder: MediaCodec? = null,
-        encoder: MediaCodec? = null,
-        inputSurface: InputSurface? = null,
-        outputSurface: OutputSurface? = null,
-        extractor: MediaExtractor? = null
-    ) {
-        runCatching {
-            decoder?.stop()
-            decoder?.release()
-
-            encoder?.stop()
-            encoder?.release()
-
-            inputSurface?.release()
-            outputSurface?.release()
-            extractor?.release()
-        }
-    }
-
     companion object {
 
-        // H.264 Advanced Video Coding
-        private const val MIME_TYPE = "video/avc"
-        private const val MEDIACODEC_TIMEOUT_DEFAULT = 100L
-
-        private const val DEFAULT_BITRATE = 8_000_000
-        private const val DEFAULT_STREAMABLE = true
-        private const val DEFAULT_USE_SOURCE = -1
+        private const val MEDIACODEC_TIMEOUT_DEFAULT = 1000L
 
         /**
          * Compresses a video file.
@@ -515,7 +456,7 @@ class VideoCompressor private constructor(private val input: File) {
          * @param onMetadataDecoded A callback invoked after the input video's metadata is read but before compression begins.
          *        The callback receives an instance of [VideoCompressor] and the parsed [Metadata] from the input video.
          *        Use this to adjust compression parameters.
-         *        Return `true` to proceed with compression, or `false` to cancel the process.
+         *        Return `null` to cancel compression, or an instance of `CompressionSettings` to proceed.
          *
          * @return A [CompressionResult] object indicating the result of the operation (success, failure, or cancellation).
          */
@@ -523,15 +464,15 @@ class VideoCompressor private constructor(private val input: File) {
             context: Context,
             input: File,
             output: File,
-            onMetadataDecoded: (VideoCompressor, Metadata) -> Boolean
+            onMetadataDecoded: (VideoCompressor, Metadata) -> CompressionSettings?
         ): CompressionResult {
             val decoder = VideoCompressor(input)
             val metadata = decoder.decodeMetadata()
-            val shouldContinue = onMetadataDecoded.invoke(decoder, metadata)
-            if (!shouldContinue)
+            val settings = onMetadataDecoded.invoke(decoder, metadata)
+            if (settings == null)
                 return CompressionResult.Cancelled
 
-            return decoder.compress(context, metadata, output)
+            return decoder.compress(context, settings, output)
         }
     }
 }

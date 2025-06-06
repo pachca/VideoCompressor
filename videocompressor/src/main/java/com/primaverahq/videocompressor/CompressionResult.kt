@@ -17,6 +17,8 @@
  */
 package com.primaverahq.videocompressor
 
+import kotlinx.coroutines.CancellationException
+
 sealed interface CompressionResult {
 
     object Success: CompressionResult
@@ -24,4 +26,22 @@ sealed interface CompressionResult {
     object Cancelled: CompressionResult
 
     class Error(val error: CompressionException): CompressionResult
+}
+
+internal suspend fun runAsResult(block: suspend () -> Unit): CompressionResult {
+    return runCatching {
+        block.invoke()
+        CompressionResult.Success
+    }.getOrElse { error ->
+        return when (error) {
+            is CancellationException ->
+                CompressionResult.Cancelled
+
+            is CompressionException ->
+                CompressionResult.Error(error)
+
+            else ->
+                CompressionResult.Error(CompressionException("Unknown error", error))
+        }
+    }
 }

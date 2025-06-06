@@ -1,23 +1,21 @@
-[![JitPack](https://jitpack.io/v/primaverahq/VideoCompressor.svg)](https://jitpack.io/#primaverahq/VideoCompressor)
+[![JitPack](https://jitpack.io/v/pachca/VideoCompressor.svg)](https://jitpack.io/#pachca/VideoCompressor)
 
 # VideoCompressor
 
 A lightweight Android library for compressing video files using `MediaCodec`.
 
-Based on the [LightCompressor](https://github.com/AbedElazizShe/LightCompressor) 
+Based on the [LightCompressor](https://github.com/AbedElazizShe/LightCompressor)
 and uses some of its parts.
-The API is inspired by Android 
+The API is inspired by Android
 [ImageDecoder](https://developer.android.com/reference/android/graphics/ImageDecoder).
-
 
 ## Features
 
-- Compress videos using hardware-accelerated codecs
+- Compress video files using H.264 codecs
   via [MediaCodec](https://developer.android.com/reference/android/media/MediaCodec)
 - Inspect video metadata and apply settings before compression
 - Coroutines and cancellation
 - Compatible with Android 5.0+ (API 21+)
-
 
 ## Usage
 
@@ -36,7 +34,7 @@ Add this to your app `build.gradle.kts`:
 
 ```kotlin
 dependencies {
-    implementation("com.github.primaverahq:VideoCompressor:v2.0.2")
+    implementation("com.github.pachca:VideoCompressor:v2.0.3")
 }
 ```
 
@@ -52,35 +50,36 @@ scope.launch {
         output = output,
 
         // Callback is fired before the actual compression.
-        // Allows setting some parameters like video resolution and bitrate.
+        // Allows setting parameters like video resolution and bitrate.
         onMetadataDecoded = { compressor, metadata ->
-            compressor.height = metadata.height / 2
-            compressor.width = metadata.width / 2
-
-            // Must be bits/sec, but encoder can somewhat adjust this value
-            compressor.bitrate = 2_000_000
-            compressor.streamable = true
-
-            // Return true to proceed with compression or false to cancel
-            true
+            
+            // Return a CompressionSettings instance to proceed or null to cancel
+            CompressionSettings.Builder()
+                .setTargetSize(
+                    width = metadata.actualWidth / 2,
+                    height = metadata.actualHeight / 2
+                )
+                .setBitrate(2_000_000)
+                .setStreamable(true)
+                .allowSizeAdjustments(true)
+                .setEncoderSelectionMode(EncoderSelectionMode.TRY_ALL)
+                .build()
         }
     )
 }
 ```
 
-
 ## Compatibility
 
 Minimum Android SDK: VideoCompressor requires a minimum API level of 21.
-
 
 ## What's next?
 
 - Improve logging
 - Extend available metadata and encoding settings
-- Switch to [Asynchronous processing](https://developer.android.com/reference/android/media/MediaCodec#data-processing)
+- Switch
+  to [Asynchronous processing](https://developer.android.com/reference/android/media/MediaCodec#data-processing)
 - H.265 (_Maybe?_)
-
 
 ## Credits
 

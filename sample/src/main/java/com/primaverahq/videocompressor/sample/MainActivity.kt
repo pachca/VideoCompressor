@@ -53,6 +53,8 @@ import androidx.core.content.FileProvider
 import com.primaverahq.videocompressor.CompressionResult
 import com.primaverahq.videocompressor.VideoCompressor
 import com.primaverahq.videocompressor.sample.ui.theme.VideoCompressorTheme
+import com.primaverahq.videocompressor.settings.CompressionSettings
+import com.primaverahq.videocompressor.settings.EncoderSelectionMode
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -90,15 +92,18 @@ class MainActivity : ComponentActivity() {
                             output = output,
                             onMetadataDecoded = { compressor, metadata ->
                                 val maxDimension = max(metadata.actualHeight, metadata.actualWidth)
-                                val ratio = 1280f / maxDimension
+                                val ratio = 720f / maxDimension
 
-                                compressor.height = (metadata.actualHeight * ratio).toInt()
-                                compressor.width = (metadata.actualWidth * ratio).toInt()
-
-                                compressor.bitrate = 4_000_000
-                                compressor.streamable = true
-
-                                true
+                                CompressionSettings.Builder()
+                                    .setTargetSize(
+                                        width = (metadata.actualWidth * ratio).toInt(),
+                                        height = (metadata.actualHeight * ratio).toInt()
+                                    )
+                                    .setBitrate(2_000_000)
+                                    .setStreamable(true)
+                                    .allowSizeAdjustments(true)
+                                    .setEncoderSelectionMode(EncoderSelectionMode.TRY_ALL)
+                                    .build()
                             }
                         )
 
@@ -117,8 +122,6 @@ class MainActivity : ComponentActivity() {
                     }
                 }
             )
-
-
 
             VideoCompressorTheme {
                 AnimatedContent(
