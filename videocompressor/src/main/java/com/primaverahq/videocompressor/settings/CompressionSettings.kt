@@ -19,12 +19,13 @@ import java.util.Base64
  *     .build()
  * ```
  *
- * @property width The target width in pixels for the compressed video
- * @property height The target height in pixels for the compressed video
+ * @property width The target width in pixels for the compressed video, or 0 in streamable-only mode
+ * @property height The target height in pixels for the compressed video, or 0 in streamable-only mode
  * @property bitrate The target bitrate in bits per second (default: 4,000,000)
  * @property streamable Whether the output should be optimized for streaming (default: true)
  * @property allowSizeAdjustments Whether minor size adjustments are allowed to maintain
  *                                codec requirements (default: true)
+ * @property streamableOnly Whether compression should be skipped in favor of fast-start processing
  */
 class CompressionSettings private constructor(
     val width: Int,
@@ -32,7 +33,8 @@ class CompressionSettings private constructor(
     val bitrate: Int,
     val streamable: Boolean,
     val allowSizeAdjustments: Boolean,
-    val encoderSelectionMode: EncoderSelectionMode
+    val encoderSelectionMode: EncoderSelectionMode,
+    val streamableOnly: Boolean
 ) {
 
     /**
@@ -48,6 +50,7 @@ class CompressionSettings private constructor(
         private var streamable: Boolean = true
         private var allowSizeAdjustments: Boolean = true
         private var encoderSelectionMode: EncoderSelectionMode = EncoderSelectionMode.DEFAULT
+        private var streamableOnly: Boolean = false
 
         /**
          * Sets the target dimensions for the compressed video.
@@ -101,6 +104,18 @@ class CompressionSettings private constructor(
         }
 
         /**
+         * Sets whether compression should be skipped and only fast-start processing applied.
+         *
+         * Streamable-only output does not require target dimensions.
+         *
+         * @param streamableOnly true to skip compression (default: false)
+         * @return This builder instance for method chaining
+         */
+        fun setStreamableOnly(streamableOnly: Boolean) = apply {
+            this.streamableOnly = streamableOnly
+        }
+
+        /**
          * Sets whether size adjustments are allowed to meet codec requirements.
          *
          * When true, the compressor may adjust dimensions to meet codec capabilities.
@@ -134,18 +149,19 @@ class CompressionSettings private constructor(
          * @throws IllegalArgumentException if required parameters are not set
          */
         fun build(): CompressionSettings {
-            val width = width
-                ?: throw IllegalArgumentException("Width and height must be set")
-            val height = height
-                ?: throw IllegalArgumentException("Width and height must be set")
+            if (!streamableOnly) {
+                requireNotNull(width) { "Width must be set" }
+                requireNotNull(height) { "Height must be set" }
+            }
 
             return CompressionSettings(
-                width = width,
-                height = height,
+                width = width ?: 0,
+                height = height ?: 0,
                 bitrate = bitrate,
-                streamable = streamable,
+                streamable = streamable || streamableOnly,
                 allowSizeAdjustments = allowSizeAdjustments,
-                encoderSelectionMode = encoderSelectionMode
+                encoderSelectionMode = encoderSelectionMode,
+                streamableOnly = streamableOnly
             )
         }
     }
