@@ -4,9 +4,9 @@ import android.util.Size
 import java.util.Base64
 
 /**
- * Configuration settings for video compression operations.
+ * Configuration settings for video processing operations.
  *
- * This class provides a builder pattern to configure video compression parameters.
+ * This class provides a builder pattern to configure compression or streamable-only processing.
  * All settings are immutable once built. Use [Builder] to create instances.
  *
  * ### Usage Example:
@@ -22,7 +22,8 @@ import java.util.Base64
  * @property width The target width in pixels for the compressed video, or 0 in streamable-only mode
  * @property height The target height in pixels for the compressed video, or 0 in streamable-only mode
  * @property bitrate The target bitrate in bits per second (default: 4,000,000)
- * @property streamable Whether the output should be optimized for streaming (default: true)
+ * @property streamable Whether the output should be optimized for streaming (default: true).
+ *                      Always true in streamable-only mode.
  * @property allowSizeAdjustments Whether minor size adjustments are allowed to maintain
  *                                codec requirements (default: true)
  * @property streamableOnly Whether compression should be skipped in favor of fast-start processing
@@ -40,8 +41,8 @@ class CompressionSettings private constructor(
     /**
      * Builder for creating [CompressionSettings] instances.
      *
-     * Provides a fluent API to configure all compression parameters.
-     * Required parameters must be set before calling [build()].
+     * Provides a fluent API to configure video processing parameters.
+     * Compression parameters must be set before calling [build()] unless streamable-only mode is enabled.
      */
     class Builder {
         private var width: Int? = null
@@ -95,6 +96,8 @@ class CompressionSettings private constructor(
 
         /**
          * Sets whether the output should be optimized for streaming.
+         *
+         * Streamable-only mode always enables this setting.
          *
          * @param streamable true to optimize for streaming (default: true)
          * @return This builder instance for method chaining
