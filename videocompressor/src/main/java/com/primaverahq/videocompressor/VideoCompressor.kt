@@ -37,6 +37,7 @@ import com.primaverahq.videocompressor.utils.CompressorUtils
 import com.primaverahq.videocompressor.utils.CompressorUtils.findTrack
 import com.primaverahq.videocompressor.utils.CompressorUtils.setUpMP4Movie
 import com.primaverahq.videocompressor.utils.StreamableVideo
+import com.primaverahq.videocompressor.utils.getIntegerCompat
 import com.primaverahq.videocompressor.video.InputSurface
 import com.primaverahq.videocompressor.video.MP4Builder
 import com.primaverahq.videocompressor.video.OutputSurface
@@ -383,7 +384,7 @@ class VideoCompressor private constructor(private val input: File) {
             extractor.selectTrack(audioIndex)
             val audioFormat = extractor.getTrackFormat(audioIndex)
             val muxerTrackIndex = mediaMuxer.addTrack(audioFormat, true)
-            var maxBufferSize = audioFormat.getInteger(MediaFormat.KEY_MAX_INPUT_SIZE)
+            var maxBufferSize = audioFormat.getIntegerCompat(MediaFormat.KEY_MAX_INPUT_SIZE, 0)
             val bufferInfo = MediaCodec.BufferInfo()
 
             if (maxBufferSize <= 0) {

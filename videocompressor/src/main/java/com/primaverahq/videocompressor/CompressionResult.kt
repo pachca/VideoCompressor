@@ -41,7 +41,7 @@ internal suspend fun runAsResult(block: suspend () -> Unit): CompressionResult {
                 CompressionResult.Error(error)
 
             else ->
-                CompressionResult.Error(CompressionException("Unknown error", error))
+                CompressionResult.Error(CompressionException(error.localizedMessage, error))
         }
     }
 }
