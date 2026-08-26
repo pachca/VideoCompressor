@@ -37,6 +37,7 @@ import com.primaverahq.videocompressor.utils.CompressorUtils
 import com.primaverahq.videocompressor.utils.CompressorUtils.findTrack
 import com.primaverahq.videocompressor.utils.CompressorUtils.setUpMP4Movie
 import com.primaverahq.videocompressor.utils.StreamableVideo
+import com.primaverahq.videocompressor.utils.getIntegerCompat
 import com.primaverahq.videocompressor.video.InputSurface
 import com.primaverahq.videocompressor.video.MP4Builder
 import com.primaverahq.videocompressor.video.OutputSurface
@@ -54,6 +55,16 @@ class VideoCompressor private constructor(private val input: File) {
         settings: CompressionSettings,
         output: File
     ) = runAsResult {
+        require(input.canonicalFile != output.canonicalFile) {
+            "Input and output files must be different"
+        }
+        if (settings.streamableOnly) {
+            withContext(Dispatchers.IO) {
+                StreamableVideo.start(input, output)
+            }
+            return@runAsResult
+        }
+
         val cache = File(context.cacheDir, input.name)
 
         val encoders = selectEncoders(settings.encoderSelectionMode)
@@ -373,7 +384,7 @@ class VideoCompressor private constructor(private val input: File) {
             extractor.selectTrack(audioIndex)
             val audioFormat = extractor.getTrackFormat(audioIndex)
             val muxerTrackIndex = mediaMuxer.addTrack(audioFormat, true)
-            var maxBufferSize = audioFormat.getInteger(MediaFormat.KEY_MAX_INPUT_SIZE)
+            var maxBufferSize = audioFormat.getIntegerCompat(MediaFormat.KEY_MAX_INPUT_SIZE, 0)
             val bufferInfo = MediaCodec.BufferInfo()
 
             if (maxBufferSize <= 0) {
@@ -450,20 +461,22 @@ class VideoCompressor private constructor(private val input: File) {
         private const val MEDIACODEC_TIMEOUT_DEFAULT = 1000L
 
         /**
-         * Compresses a video file.
+         * Compresses a video file or optimizes it for fast-start streaming.
          *
-         * This function handles the compression of the specified input video file and writes the result
-         * to the specified output file. The compression process is configured using the provided metadata callback,
-         * which is triggered before compression starts.
+         * This function processes the specified input video file and writes the result to the specified
+         * output file. Processing is configured using the provided metadata callback. When
+         * [CompressionSettings.streamableOnly] is true, compression is skipped and only fast-start
+         * processing is applied.
          *
          * @param context android.content.Context.
-         * @param input The input video [File] to be compressed. Must exist and be a valid video file.
-         * @param output The output [File] where the compressed video will be saved. The caller is responsible
+         * @param input The input video [File] to process. Must exist and be a valid video file.
+         * @param output The output [File] where the processed video will be saved. The caller is responsible
          *        for ensuring that this file can be written to (e.g., proper permissions, writable path).
-         * @param onMetadataDecoded A callback invoked after the input video's metadata is read but before compression begins.
+         *        Compression and streamable-only processing require input and output to be different files.
+         * @param onMetadataDecoded A callback invoked after the input video's metadata is read but before processing begins.
          *        The callback receives an instance of [VideoCompressor] and the parsed [Metadata] from the input video.
-         *        Use this to adjust compression parameters.
-         *        Return `null` to cancel compression, or an instance of `CompressionSettings` to proceed.
+         *        Use this to adjust compression parameters or select streamable-only processing.
+         *        Return `null` to cancel processing, or an instance of `CompressionSettings` to proceed.
          *
          * @return A [CompressionResult] object indicating the result of the operation (success, failure, or cancellation).
          */
@@ -476,8 +489,7 @@ class VideoCompressor private constructor(private val input: File) {
             val decoder = VideoCompressor(input)
             val metadata = decoder.decodeMetadata()
             val settings = onMetadataDecoded.invoke(decoder, metadata)
-            if (settings == null)
-                return CompressionResult.Cancelled
+                ?: return CompressionResult.Cancelled
 
             return decoder.compress(context, settings, output)
         }

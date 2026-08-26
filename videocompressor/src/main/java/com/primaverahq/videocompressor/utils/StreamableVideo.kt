@@ -29,38 +29,38 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.channels.FileChannel
 
-object StreamableVideo {
+internal object StreamableVideo {
 
-    private const val tag = "StreamableVideo"
+    private const val TAG = "StreamableVideo"
     private const val ATOM_PREAMBLE_SIZE = 8
 
     /**
-     * @param in  Input file.
-     * @param out Output file.
-     * @return false if input file is already fast start.
+     * @param input  Input file.
+     * @param output Output file.
+     * @return false if input file was already fast start and copied unchanged.
      * @throws IOException
+     * @throws IllegalArgumentException
      */
-    @Throws(IOException::class)
-    fun start(`in`: File?, out: File): Boolean {
-        var ret = false
-        var inStream: FileInputStream? = null
-        var outStream: FileOutputStream? = null
+    fun start(input: File, output: File): Boolean {
+        require(input.canonicalFile != output.canonicalFile) {
+            "Input and output files must be different"
+        }
+
         return try {
-            inStream = FileInputStream(`in`)
-            val infile = inStream.channel
-            outStream = FileOutputStream(out)
-            val outfile = outStream.channel
-            convert(infile, outfile).also { ret = it }
-        } finally {
-            safeClose(inStream)
-            safeClose(outStream)
-            if (!ret) {
-                out.delete()
+            val converted = FileInputStream(input).use { inStream ->
+                FileOutputStream(output).use { outStream ->
+                    convert(inStream.channel, outStream.channel)
+                }
             }
+
+            if (!converted) input.copyTo(output, overwrite = true)
+            converted
+        } catch (e: Exception) {
+            output.delete()
+            throw e
         }
     }
 
-    @Throws(IOException::class)
     private fun convert(infile: FileChannel, outfile: FileChannel): Boolean {
         val atomBytes = ByteBuffer.allocate(ATOM_PREAMBLE_SIZE).order(ByteOrder.BIG_ENDIAN)
         var atomType = 0
@@ -69,32 +69,14 @@ object StreamableVideo {
         val moovAtom: ByteBuffer
         var ftypAtom: ByteBuffer? = null
         var startOffset: Long = 0
+        var mdatSeen = false
+        var moovBeforeMdat = false
 
         // traverse through the atoms in the file to make sure that 'moov' is at the end
         while (readAndFill(infile, atomBytes)) {
             atomSize = uInt32ToLong(atomBytes.int)
             atomType = atomBytes.int
 
-            // keep ftyp atom
-            if (atomType == FTYP_ATOM) {
-                val ftypAtomSize = uInt32ToInt(atomSize)
-                ftypAtom = ByteBuffer.allocate(ftypAtomSize).order(ByteOrder.BIG_ENDIAN)
-                atomBytes.rewind()
-                ftypAtom.put(atomBytes)
-                if (infile.read(ftypAtom) < ftypAtomSize - ATOM_PREAMBLE_SIZE) break
-                ftypAtom.flip()
-                startOffset = infile.position() // after ftyp atom
-            } else {
-                if (atomSize == 1L) {
-                    /* 64-bit special case */
-                    atomBytes.clear()
-                    if (!readAndFill(infile, atomBytes)) break
-                    atomSize = uInt64ToLong(atomBytes.long)
-                    infile.position(infile.position() + atomSize - ATOM_PREAMBLE_SIZE * 2) // seek
-                } else {
-                    infile.position(infile.position() + atomSize - ATOM_PREAMBLE_SIZE) // seek
-                }
-            }
             if (atomType != FREE_ATOM
                 && atomType != JUNK_ATOM
                 && atomType != MDAT_ATOM
@@ -106,31 +88,76 @@ object StreamableVideo {
                 && atomType != UUID_ATOM
                 && atomType != FTYP_ATOM
             ) {
-                Log.wtf(tag, "encountered non-QT top-level atom (is this a QuickTime file?)")
-                break
+                throw IOException("encountered non-QT top-level atom")
             }
 
-            /* The atom header is 8 (or 16 bytes), if the atom size (which
-         * includes these 8 or 16 bytes) is less than that, we won't be
-         * able to continue scanning sensibly after this atom, so break. */
-            if (atomSize < 8) break
+            if (atomType == MOOV_ATOM && !mdatSeen) moovBeforeMdat = true
+            if (atomType == MDAT_ATOM) mdatSeen = true
+
+            if (atomSize == 0L) {
+                infile.position(infile.size())
+                continue
+            }
+            if (atomSize != 1L && atomSize < ATOM_PREAMBLE_SIZE) {
+                throw IOException("invalid atom size")
+            }
+
+            // keep ftyp atom
+            if (atomType == FTYP_ATOM) {
+                if (atomSize == 1L) throw IOException("extended ftyp atom is not supported")
+                if (atomSize - ATOM_PREAMBLE_SIZE > infile.size() - infile.position()) {
+                    throw IOException("ftyp atom exceeds input size")
+                }
+
+                val ftypAtomSize = uInt32ToInt(atomSize)
+                ftypAtom = ByteBuffer.allocate(ftypAtomSize).order(ByteOrder.BIG_ENDIAN)
+                atomBytes.rewind()
+                ftypAtom.put(atomBytes)
+                if (infile.read(ftypAtom) < ftypAtomSize - ATOM_PREAMBLE_SIZE) {
+                    throw IOException("failed to read ftyp atom")
+                }
+                ftypAtom.flip()
+                startOffset = infile.position() // after ftyp atom
+            } else {
+                if (atomSize == 1L) {
+                    /* 64-bit special case */
+                    atomBytes.clear()
+                    if (!readAndFill(infile, atomBytes)) {
+                        throw IOException("failed to read extended atom size")
+                    }
+                    atomSize = uInt64ToLong(atomBytes.long)
+                    if (atomSize < ATOM_PREAMBLE_SIZE * 2) {
+                        throw IOException("invalid extended atom size")
+                    }
+                    if (atomSize - ATOM_PREAMBLE_SIZE * 2 > infile.size() - infile.position()) {
+                        throw IOException("atom exceeds input size")
+                    }
+                    infile.position(infile.position() + atomSize - ATOM_PREAMBLE_SIZE * 2) // seek
+                } else {
+                    if (atomSize - ATOM_PREAMBLE_SIZE > infile.size() - infile.position()) {
+                        throw IOException("atom exceeds input size")
+                    }
+                    infile.position(infile.position() + atomSize - ATOM_PREAMBLE_SIZE) // seek
+                }
+            }
+        }
+        if (moovBeforeMdat && mdatSeen) {
+            return false
         }
         if (atomType != MOOV_ATOM) {
-            Log.wtf(tag, "last atom in file was not a moov atom")
-            return false
+            throw IOException("last atom in file was not a moov atom")
         }
 
         // atomSize is uint64, but for moov uint32 should be stored.
-        val moovAtomSize: Int = uInt32ToInt(atomSize)
-        lastOffset =
-            infile.size() - moovAtomSize
+        val moovAtomSize = uInt32ToInt(atomSize)
+        lastOffset = infile.size() - moovAtomSize
         moovAtom = ByteBuffer.allocate(moovAtomSize).order(ByteOrder.BIG_ENDIAN)
         if (!readAndFill(infile, moovAtom, lastOffset)) {
-            throw Exception("failed to read moov atom")
+            throw IOException("failed to read moov atom")
         }
 
         if (moovAtom.getInt(12) == CMOV_ATOM) {
-            throw Exception("this utility does not support compressed moov atoms yet")
+            throw IOException("this utility does not support compressed moov atoms yet")
         }
 
         // crawl through the moov chunk in search of stco or co64 atoms
@@ -143,19 +170,19 @@ object StreamableVideo {
             }
             atomSize = uInt32ToLong(moovAtom.getInt(atomHead)) // uint32
             if (atomSize > moovAtom.remaining()) {
-                throw Exception("bad atom size")
+                throw IOException("bad atom size")
             }
             // skip size (4 bytes), type (4 bytes), version (1 byte) and flags (3 bytes)
             moovAtom.position(atomHead + 12)
             if (moovAtom.remaining() < 4) {
-                throw Exception("malformed atom")
+                throw IOException("malformed atom")
             }
             // uint32_t, but assuming moovAtomSize is in int32 range, so this will be in int32 range
             val offsetCount = uInt32ToInt(moovAtom.int)
             if (atomType == STCO_ATOM) {
-                Log.i(tag, "patching stco atom...")
+                Log.i(TAG, "patching stco atom...")
                 if (moovAtom.remaining() < offsetCount * 4) {
-                    throw Exception("bad atom size/element count")
+                    throw IOException("bad atom size/element count")
                 }
                 for (i in 0 until offsetCount) {
                     val currentOffset = moovAtom.getInt(moovAtom.position())
@@ -163,7 +190,7 @@ object StreamableVideo {
                         currentOffset + moovAtomSize // calculate uint32 in int, bitwise addition
 
                     if (currentOffset < 0 && newOffset >= 0) {
-                        throw Exception(
+                        throw IOException(
                             "This is bug in original qt-faststart.c: "
                                     + "stco atom should be extended to co64 atom as new offset value overflows uint32, "
                                     + "but is not implemented."
@@ -172,9 +199,9 @@ object StreamableVideo {
                     moovAtom.putInt(newOffset)
                 }
             } else if (atomType == CO64_ATOM) {
-                Log.wtf(tag, "patching co64 atom...")
+                Log.wtf(TAG, "patching co64 atom...")
                 if (moovAtom.remaining() < offsetCount * 8) {
-                    throw Exception("bad atom size/element count")
+                    throw IOException("bad atom size/element count")
                 }
                 for (i in 0 until offsetCount) {
                     val currentOffset = moovAtom.getLong(moovAtom.position())
@@ -185,33 +212,22 @@ object StreamableVideo {
         infile.position(startOffset) // seek after ftyp atom
         if (ftypAtom != null) {
             // dump the same ftyp atom
-            Log.i(tag, "writing ftyp atom...")
+            Log.i(TAG, "writing ftyp atom...")
             ftypAtom.rewind()
             outfile.write(ftypAtom)
         }
 
         // dump the new moov atom
-        Log.i(tag, "writing moov atom...")
+        Log.i(TAG, "writing moov atom...")
         moovAtom.rewind()
         outfile.write(moovAtom)
 
         // copy the remainder of the infile, from offset 0 -> (lastOffset - startOffset) - 1
-        Log.i(tag, "copying rest of file...")
+        Log.i(TAG, "copying rest of file...")
         infile.transferTo(startOffset, lastOffset - startOffset, outfile)
         return true
     }
 
-    private fun safeClose(closeable: Closeable?) {
-        if (closeable != null) {
-            try {
-                closeable.close()
-            } catch (e: IOException) {
-                Log.wtf(tag, "Failed to close file: ")
-            }
-        }
-    }
-
-    @Throws(IOException::class)
     private fun readAndFill(infile: FileChannel, buffer: ByteBuffer): Boolean {
         buffer.clear()
         val size = infile.read(buffer)
@@ -219,7 +235,6 @@ object StreamableVideo {
         return size == buffer.capacity()
     }
 
-    @Throws(IOException::class)
     private fun readAndFill(infile: FileChannel, buffer: ByteBuffer, position: Long): Boolean {
         buffer.clear()
         val size = infile.read(buffer, position)
