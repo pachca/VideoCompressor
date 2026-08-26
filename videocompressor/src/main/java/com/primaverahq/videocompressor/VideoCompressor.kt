@@ -54,6 +54,13 @@ class VideoCompressor private constructor(private val input: File) {
         settings: CompressionSettings,
         output: File
     ) = runAsResult {
+        if (settings.streamableOnly) {
+            withContext(Dispatchers.IO) {
+                StreamableVideo.start(input, output)
+            }
+            return@runAsResult
+        }
+
         val cache = File(context.cacheDir, input.name)
 
         val encoders = selectEncoders(settings.encoderSelectionMode)
