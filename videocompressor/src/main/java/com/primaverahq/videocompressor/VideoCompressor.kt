@@ -58,7 +58,7 @@ class VideoCompressor private constructor(private val input: File) {
         require(input.canonicalFile != output.canonicalFile) {
             "Input and output files must be different"
         }
-        if (settings.streamableOnly) {
+        if (settings.fastStartOnly) {
             withContext(Dispatchers.IO) {
                 FastStartOptimizer.optimize(input, output)
             }
@@ -331,7 +331,7 @@ class VideoCompressor private constructor(private val input: File) {
         cache: File,
         output: File
     ) = withContext(Dispatchers.IO) {
-        if (settings.streamable)
+        if (settings.fastStart)
             FastStartOptimizer.optimize(cache, output)
         else
             cache.copyTo(output)
