@@ -100,7 +100,7 @@ class MainActivity : ComponentActivity() {
                                         height = (metadata.actualHeight * ratio).toInt()
                                     )
                                     .setBitrate(2_000_000)
-                                    .setStreamable(true)
+                                    .setFastStart(true)
                                     .allowSizeAdjustments(true)
                                     .setEncoderSelectionMode(EncoderSelectionMode.TRY_ALL)
                                     .build()

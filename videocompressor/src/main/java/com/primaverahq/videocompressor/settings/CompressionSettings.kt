@@ -6,7 +6,7 @@ import java.util.Base64
 /**
  * Configuration settings for video processing operations.
  *
- * This class provides a builder pattern to configure compression or streamable-only processing.
+ * This class provides a builder pattern to configure compression or fast-start-only processing.
  * All settings are immutable once built. Use [Builder] to create instances.
  *
  * ### Usage Example:
@@ -14,13 +14,13 @@ import java.util.Base64
  * val settings = CompressionSettings.Builder()
  *     .setTargetSize(1280, 720)
  *     .setBitrate(5_000_000)
- *     .setStreamable(false)
+ *     .setFastStart(false)
  *     .allowSizeAdjustments(true)
  *     .build()
  * ```
  *
- * @property width The target width in pixels for the compressed video, or 0 in streamable-only mode
- * @property height The target height in pixels for the compressed video, or 0 in streamable-only mode
+ * @property width The target width in pixels for the compressed video, or 0 in fast-start-only mode
+ * @property height The target height in pixels for the compressed video, or 0 in fast-start-only mode
  * @property bitrate The target bitrate in bits per second (default: 4,000,000)
  * @property fastStart Whether the output should be optimized for fast-start playback (default: true).
  *                     Always true in fast-start-only mode.
@@ -54,7 +54,7 @@ class CompressionSettings private constructor(
      * Builder for creating [CompressionSettings] instances.
      *
      * Provides a fluent API to configure video processing parameters.
-     * Compression parameters must be set before calling [build()] unless streamable-only mode is enabled.
+     * Compression parameters must be set before calling [build()] unless fast-start-only mode is enabled.
      */
     class Builder {
         private var width: Int? = null

@@ -19,6 +19,12 @@ package com.primaverahq.videocompressor.data
 
 import android.util.Size
 
+/**
+ * Metadata decoded from the input video.
+ *
+ * [isFastStartOptimized] describes MP4 atom order only. It does not guarantee codec or network
+ * streaming compatibility.
+ */
 class Metadata internal constructor(
     internal val width: Int,
     internal val height: Int,

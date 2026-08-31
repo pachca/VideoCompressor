@@ -467,21 +467,22 @@ class VideoCompressor private constructor(private val input: File) {
         private const val MEDIACODEC_TIMEOUT_DEFAULT = 1000L
 
         /**
-         * Compresses a video file or optimizes it for fast-start streaming.
+         * Compresses a video file or optimizes it for fast-start playback.
          *
          * This function processes the specified input video file and writes the result to the specified
          * output file. Processing is configured using the provided metadata callback. When
-         * [CompressionSettings.streamableOnly] is true, compression is skipped and only fast-start
+         * [CompressionSettings.fastStartOnly] is true, compression is skipped and only fast-start
          * processing is applied.
          *
          * @param context android.content.Context.
          * @param input The input video [File] to process. Must exist and be a valid video file.
          * @param output The output [File] where the processed video will be saved. The caller is responsible
          *        for ensuring that this file can be written to (e.g., proper permissions, writable path).
-         *        Compression and streamable-only processing require input and output to be different files.
+         *        Compression and fast-start-only processing require input and output to be different files.
          * @param onMetadataDecoded A callback invoked after the input video's metadata is read but before processing begins.
          *        The callback receives an instance of [VideoCompressor] and the parsed [Metadata] from the input video.
-         *        Use this to adjust compression parameters or select streamable-only processing.
+         *        Use this to adjust compression parameters or select fast-start-only processing.
+         *        [Metadata.isFastStartOptimized] can be used to skip unnecessary fast-start processing.
          *        Return `null` to cancel processing, or an instance of `CompressionSettings` to proceed.
          *
          * @return A [CompressionResult] object indicating the result of the operation (success, failure, or cancellation).
