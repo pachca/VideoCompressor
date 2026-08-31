@@ -6,7 +6,7 @@ import java.util.Base64
 /**
  * Configuration settings for video processing operations.
  *
- * This class provides a builder pattern to configure compression or streamable-only processing.
+ * This class provides a builder pattern to configure compression or fast-start-only processing.
  * All settings are immutable once built. Use [Builder] to create instances.
  *
  * ### Usage Example:
@@ -14,44 +14,56 @@ import java.util.Base64
  * val settings = CompressionSettings.Builder()
  *     .setTargetSize(1280, 720)
  *     .setBitrate(5_000_000)
- *     .setStreamable(false)
+ *     .setFastStart(false)
  *     .allowSizeAdjustments(true)
  *     .build()
  * ```
  *
- * @property width The target width in pixels for the compressed video, or 0 in streamable-only mode
- * @property height The target height in pixels for the compressed video, or 0 in streamable-only mode
+ * @property width The target width in pixels for the compressed video, or 0 in fast-start-only mode
+ * @property height The target height in pixels for the compressed video, or 0 in fast-start-only mode
  * @property bitrate The target bitrate in bits per second (default: 4,000,000)
- * @property streamable Whether the output should be optimized for streaming (default: true).
- *                      Always true in streamable-only mode.
+ * @property fastStart Whether the output should be optimized for fast-start playback (default: true).
+ *                     Always true in fast-start-only mode.
  * @property allowSizeAdjustments Whether minor size adjustments are allowed to maintain
  *                                codec requirements (default: true)
- * @property streamableOnly Whether compression should be skipped in favor of fast-start processing
+ * @property fastStartOnly Whether compression should be skipped in favor of fast-start processing
  */
 class CompressionSettings private constructor(
     val width: Int,
     val height: Int,
     val bitrate: Int,
-    val streamable: Boolean,
+    val fastStart: Boolean,
     val allowSizeAdjustments: Boolean,
     val encoderSelectionMode: EncoderSelectionMode,
-    val streamableOnly: Boolean
+    val fastStartOnly: Boolean
 ) {
+
+    @Deprecated(
+        message = "Use fastStart",
+        replaceWith = ReplaceWith("fastStart")
+    )
+    val streamable: Boolean get() = fastStart
+
+    @Deprecated(
+        message = "Use fastStartOnly",
+        replaceWith = ReplaceWith("fastStartOnly")
+    )
+    val streamableOnly: Boolean get() = fastStartOnly
 
     /**
      * Builder for creating [CompressionSettings] instances.
      *
      * Provides a fluent API to configure video processing parameters.
-     * Compression parameters must be set before calling [build()] unless streamable-only mode is enabled.
+     * Compression parameters must be set before calling [build()] unless fast-start-only mode is enabled.
      */
     class Builder {
         private var width: Int? = null
         private var height: Int? = null
         private var bitrate: Int = 4_000_000
-        private var streamable: Boolean = true
+        private var fastStart: Boolean = true
         private var allowSizeAdjustments: Boolean = true
         private var encoderSelectionMode: EncoderSelectionMode = EncoderSelectionMode.DEFAULT
-        private var streamableOnly: Boolean = false
+        private var fastStartOnly: Boolean = false
 
         /**
          * Sets the target dimensions for the compressed video.
@@ -95,28 +107,40 @@ class CompressionSettings private constructor(
         }
 
         /**
-         * Sets whether the output should be optimized for streaming.
+         * Sets whether the output should be optimized for fast-start playback.
          *
-         * Streamable-only mode always enables this setting.
+         * Fast-start-only mode always enables this setting.
          *
-         * @param streamable true to optimize for streaming (default: true)
+         * @param enabled true to enable fast-start optimization (default: true)
          * @return This builder instance for method chaining
          */
-        fun setStreamable(streamable: Boolean) = apply {
-            this.streamable = streamable
+        fun setFastStart(enabled: Boolean) = apply {
+            fastStart = enabled
         }
+
+        @Deprecated(
+            message = "Use setFastStart",
+            replaceWith = ReplaceWith("setFastStart(streamable)")
+        )
+        fun setStreamable(streamable: Boolean) = setFastStart(streamable)
 
         /**
          * Sets whether compression should be skipped and only fast-start processing applied.
          *
-         * Streamable-only output does not require target dimensions.
+         * Fast-start-only output does not require target dimensions.
          *
-         * @param streamableOnly true to skip compression (default: false)
+         * @param enabled true to skip compression (default: false)
          * @return This builder instance for method chaining
          */
-        fun setStreamableOnly(streamableOnly: Boolean) = apply {
-            this.streamableOnly = streamableOnly
+        fun setFastStartOnly(enabled: Boolean) = apply {
+            fastStartOnly = enabled
         }
+
+        @Deprecated(
+            message = "Use setFastStartOnly",
+            replaceWith = ReplaceWith("setFastStartOnly(streamableOnly)")
+        )
+        fun setStreamableOnly(streamableOnly: Boolean) = setFastStartOnly(streamableOnly)
 
         /**
          * Sets whether size adjustments are allowed to meet codec requirements.
@@ -152,7 +176,7 @@ class CompressionSettings private constructor(
          * @throws IllegalArgumentException if required parameters are not set
          */
         fun build(): CompressionSettings {
-            if (!streamableOnly) {
+            if (!fastStartOnly) {
                 requireNotNull(width) { "Width must be set" }
                 requireNotNull(height) { "Height must be set" }
             }
@@ -161,10 +185,10 @@ class CompressionSettings private constructor(
                 width = width ?: 0,
                 height = height ?: 0,
                 bitrate = bitrate,
-                streamable = streamable || streamableOnly,
+                fastStart = fastStart || fastStartOnly,
                 allowSizeAdjustments = allowSizeAdjustments,
                 encoderSelectionMode = encoderSelectionMode,
-                streamableOnly = streamableOnly
+                fastStartOnly = fastStartOnly
             )
         }
     }

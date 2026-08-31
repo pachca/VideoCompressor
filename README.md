@@ -3,7 +3,7 @@
 # VideoCompressor
 
 A lightweight Android library for compressing video files using `MediaCodec` or optimizing
-MP4 files for fast-start streaming without compression.
+MP4 files for fast-start playback without compression.
 
 Based on the [LightCompressor](https://github.com/AbedElazizShe/LightCompressor)
 and uses some of its parts.
@@ -14,7 +14,7 @@ The API is inspired by Android
 
 - Compress video files using H.264 codecs
   via [MediaCodec](https://developer.android.com/reference/android/media/MediaCodec)
-- Optimize MP4 files for fast-start streaming without compression
+- Optimize MP4 files for fast-start playback without compression
 - Inspect video metadata and apply settings before processing
 - Coroutines and cancellation
 - Compatible with Android 5.0+ (API 21+)
@@ -62,7 +62,7 @@ scope.launch {
                     height = metadata.actualHeight / 2
                 )
                 .setBitrate(2_000_000)
-                .setStreamable(true)
+                .setFastStart(true)
                 .allowSizeAdjustments(true)
                 .setEncoderSelectionMode(EncoderSelectionMode.TRY_ALL)
                 .build()
@@ -71,27 +71,46 @@ scope.launch {
 }
 ```
 
-### Streamable-only processing
+### Fast-start-only processing
 
-Use streamable-only mode to skip compression and only move MP4 metadata to the beginning of
-the output for fast-start streaming. Target dimensions and other compression settings are not
-required. Input and output must be different files. If the input is already optimized, it is
-copied unchanged.
+Use fast-start-only mode to skip compression and move MP4 metadata before its media data.
+Target dimensions and other compression settings are not required. Input and output must be
+different files.
+
+`Metadata.isFastStartOptimized` reports whether the input already has the required atom order.
+Return `null` from the metadata callback to avoid creating an unnecessary output copy. Because
+`null` produces `CompressionResult.Cancelled`, track this decision separately from other forms of
+cancellation and continue using the input file.
 
 ```kotlin
 scope.launch {
+    var useInput = false
     val result = VideoCompressor.compress(
         context = context,
         input = input,
         output = output,
-        onMetadataDecoded = { _, _ ->
-            CompressionSettings.Builder()
-                .setStreamableOnly(true)
-                .build()
+        onMetadataDecoded = { _, metadata ->
+            if (metadata.isFastStartOptimized) {
+                useInput = true
+                null
+            } else {
+                CompressionSettings.Builder()
+                    .setFastStartOnly(true)
+                    .build()
+            }
         }
     )
+
+    val processedFile = when {
+        useInput -> input
+        result == CompressionResult.Success -> output
+        else -> null
+    }
 }
 ```
+
+If a separate output file is required even when the input is already optimized, always return
+fast-start-only settings. The input will then be copied unchanged.
 
 ## Compatibility
 

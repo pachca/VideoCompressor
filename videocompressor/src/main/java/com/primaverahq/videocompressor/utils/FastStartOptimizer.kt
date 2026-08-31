@@ -29,10 +29,21 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.channels.FileChannel
 
-internal object StreamableVideo {
+internal object FastStartOptimizer {
 
-    private const val TAG = "StreamableVideo"
+    private const val TAG = "FastStartOptimizer"
     private const val ATOM_PREAMBLE_SIZE = 8
+
+    /** Returns true only when moov precedes the first non-empty mdat atom. */
+    fun isFastStartOptimized(input: File): Boolean {
+        return try {
+            FileInputStream(input).use { inputStream ->
+                isFastStartOptimized(inputStream.channel)
+            }
+        } catch (_: Exception) {
+            false
+        }
+    }
 
     /**
      * @param input  Input file.
@@ -41,7 +52,7 @@ internal object StreamableVideo {
      * @throws IOException
      * @throws IllegalArgumentException
      */
-    fun start(input: File, output: File): Boolean {
+    fun optimize(input: File, output: File): Boolean {
         require(input.canonicalFile != output.canonicalFile) {
             "Input and output files must be different"
         }
@@ -59,6 +70,39 @@ internal object StreamableVideo {
             output.delete()
             throw e
         }
+    }
+
+    private fun isFastStartOptimized(infile: FileChannel): Boolean {
+        val atomBytes = ByteBuffer.allocate(ATOM_PREAMBLE_SIZE).order(ByteOrder.BIG_ENDIAN)
+        val fileSize = infile.size()
+        var moovSeen = false
+
+        while (readAndFill(infile, atomBytes)) {
+            val encodedSize = uInt32ToLong(atomBytes.int)
+            val atomType = atomBytes.int
+            val payloadSize = when (encodedSize) {
+                0L -> fileSize - infile.position()
+                1L -> {
+                    if (!readAndFill(infile, atomBytes)) return false
+
+                    val extendedSize = uInt64ToLong(atomBytes.long)
+                    if (extendedSize < ATOM_PREAMBLE_SIZE * 2) return false
+                    extendedSize - ATOM_PREAMBLE_SIZE * 2
+                }
+                else -> {
+                    if (encodedSize < ATOM_PREAMBLE_SIZE) return false
+                    encodedSize - ATOM_PREAMBLE_SIZE
+                }
+            }
+
+            if (payloadSize < 0 || payloadSize > fileSize - infile.position()) return false
+            if (atomType == MOOV_ATOM && payloadSize > 0) moovSeen = true
+            if (atomType == MDAT_ATOM && payloadSize > 0) return moovSeen
+
+            infile.position(infile.position() + payloadSize)
+        }
+
+        return false
     }
 
     private fun convert(infile: FileChannel, outfile: FileChannel): Boolean {

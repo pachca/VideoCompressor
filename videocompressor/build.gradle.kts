@@ -25,6 +25,9 @@ android {
     kotlinOptions {
         jvmTarget = "11"
     }
+    testOptions {
+        unitTests.isReturnDefaultValues = true
+    }
 }
 
 dependencies {
@@ -35,4 +38,6 @@ dependencies {
     implementation("androidx.core:core-ktx:1.16.0")
 
     implementation("com.googlecode.mp4parser:isoparser:1.0.6")
+
+    testImplementation("junit:junit:4.13.2")
 }
