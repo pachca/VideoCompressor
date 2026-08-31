@@ -453,7 +453,13 @@ class VideoCompressor private constructor(private val input: File) {
             ?.toIntOrNull()
             ?: -1
 
-        return Metadata(width, height, rotation, bitrate)
+        return Metadata(
+            width = width,
+            height = height,
+            rotation = rotation,
+            bitrate = bitrate,
+            isFastStartOptimized = FastStartOptimizer.isFastStartOptimized(input)
+        )
     }
 
     companion object {
@@ -487,7 +493,9 @@ class VideoCompressor private constructor(private val input: File) {
             onMetadataDecoded: (VideoCompressor, Metadata) -> CompressionSettings?
         ): CompressionResult {
             val decoder = VideoCompressor(input)
-            val metadata = decoder.decodeMetadata()
+            val metadata = withContext(Dispatchers.IO) {
+                decoder.decodeMetadata()
+            }
             val settings = onMetadataDecoded.invoke(decoder, metadata)
                 ?: return CompressionResult.Cancelled
 

@@ -19,11 +19,12 @@ package com.primaverahq.videocompressor.data
 
 import android.util.Size
 
-class Metadata(
+class Metadata internal constructor(
     internal val width: Int,
     internal val height: Int,
     internal val rotation: Int,
-    val bitrate: Int
+    val bitrate: Int,
+    val isFastStartOptimized: Boolean
 ) {
     val actualWidth: Int get() =
         if (rotation == 90 || rotation == 270) height else width
