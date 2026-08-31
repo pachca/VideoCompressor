@@ -1,5 +1,6 @@
 package com.primaverahq.videocompressor.utils
 
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -9,7 +10,7 @@ import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
-class StreamableVideoTest {
+class FastStartOptimizerTest {
 
     @get:Rule
     val temporaryFolder = TemporaryFolder()
@@ -18,42 +19,42 @@ class StreamableVideoTest {
     fun `moov before mdat is optimized`() {
         val input = videoFile(atom("moov"), atom("mdat"))
 
-        assertTrue(StreamableVideo.isFastStartOptimized(input))
+        assertTrue(FastStartOptimizer.isFastStartOptimized(input))
     }
 
     @Test
     fun `mdat before moov is not optimized`() {
         val input = videoFile(atom("mdat"), atom("moov"))
 
-        assertFalse(StreamableVideo.isFastStartOptimized(input))
+        assertFalse(FastStartOptimizer.isFastStartOptimized(input))
     }
 
     @Test
     fun `empty mdat is ignored`() {
         val input = videoFile(atom("mdat", byteArrayOf()), atom("moov"), atom("mdat"))
 
-        assertTrue(StreamableVideo.isFastStartOptimized(input))
+        assertTrue(FastStartOptimizer.isFastStartOptimized(input))
     }
 
     @Test
     fun `unknown atoms are skipped`() {
         val input = videoFile(atom("sidx"), atom("moov"), atom("mdat"))
 
-        assertTrue(StreamableVideo.isFastStartOptimized(input))
+        assertTrue(FastStartOptimizer.isFastStartOptimized(input))
     }
 
     @Test
     fun `extended atom sizes are supported`() {
         val input = videoFile(extendedAtom("moov"), extendedAtom("mdat"))
 
-        assertTrue(StreamableVideo.isFastStartOptimized(input))
+        assertTrue(FastStartOptimizer.isFastStartOptimized(input))
     }
 
     @Test
     fun `mdat extending to eof is supported`() {
         val input = videoFile(atom("moov"), eofAtom("mdat"))
 
-        assertTrue(StreamableVideo.isFastStartOptimized(input))
+        assertTrue(FastStartOptimizer.isFastStartOptimized(input))
     }
 
     @Test
@@ -64,7 +65,7 @@ class StreamableVideoTest {
             .put("free".toByteArray())
             .array()
 
-        assertFalse(StreamableVideo.isFastStartOptimized(videoFile(invalidAtom)))
+        assertFalse(FastStartOptimizer.isFastStartOptimized(videoFile(invalidAtom)))
     }
 
     @Test
@@ -75,17 +76,17 @@ class StreamableVideoTest {
             .put("free".toByteArray())
             .array()
 
-        assertFalse(StreamableVideo.isFastStartOptimized(videoFile(invalidAtom)))
+        assertFalse(FastStartOptimizer.isFastStartOptimized(videoFile(invalidAtom)))
     }
 
     @Test
     fun `truncated header is not optimized`() {
-        assertFalse(StreamableVideo.isFastStartOptimized(videoFile(byteArrayOf(0, 0, 0, 8))))
+        assertFalse(FastStartOptimizer.isFastStartOptimized(videoFile(byteArrayOf(0, 0, 0, 8))))
     }
 
     @Test
     fun `file without media data is not optimized`() {
-        assertFalse(StreamableVideo.isFastStartOptimized(videoFile(atom("moov"))))
+        assertFalse(FastStartOptimizer.isFastStartOptimized(videoFile(atom("moov"))))
     }
 
     @Test
@@ -94,13 +95,35 @@ class StreamableVideoTest {
         val optimized = videoFile(atom("moov"), atom("mdat"), trailingInvalidAtom)
         val notOptimized = videoFile(atom("mdat"), trailingInvalidAtom)
 
-        assertTrue(StreamableVideo.isFastStartOptimized(optimized))
-        assertFalse(StreamableVideo.isFastStartOptimized(notOptimized))
+        assertTrue(FastStartOptimizer.isFastStartOptimized(optimized))
+        assertFalse(FastStartOptimizer.isFastStartOptimized(notOptimized))
     }
 
     @Test
     fun `missing file is not optimized`() {
-        assertFalse(StreamableVideo.isFastStartOptimized(File(temporaryFolder.root, "missing.mp4")))
+        assertFalse(FastStartOptimizer.isFastStartOptimized(File(temporaryFolder.root, "missing.mp4")))
+    }
+
+    @Test
+    fun `already optimized input is copied unchanged`() {
+        val input = videoFile(atom("moov"), atom("mdat"))
+        val output = temporaryFolder.newFile()
+
+        assertFalse(FastStartOptimizer.optimize(input, output))
+        assertArrayEquals(input.readBytes(), output.readBytes())
+    }
+
+    @Test
+    fun `non-optimized input is rewritten`() {
+        val input = videoFile(
+            atom("ftyp"),
+            atom("mdat"),
+            atom("moov", ByteArray(8))
+        )
+        val output = temporaryFolder.newFile()
+
+        assertTrue(FastStartOptimizer.optimize(input, output))
+        assertTrue(FastStartOptimizer.isFastStartOptimized(output))
     }
 
     private fun videoFile(vararg atoms: ByteArray): File {

@@ -29,9 +29,9 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.channels.FileChannel
 
-internal object StreamableVideo {
+internal object FastStartOptimizer {
 
-    private const val TAG = "StreamableVideo"
+    private const val TAG = "FastStartOptimizer"
     private const val ATOM_PREAMBLE_SIZE = 8
 
     /** Returns true only when moov precedes the first non-empty mdat atom. */
@@ -52,7 +52,7 @@ internal object StreamableVideo {
      * @throws IOException
      * @throws IllegalArgumentException
      */
-    fun start(input: File, output: File): Boolean {
+    fun optimize(input: File, output: File): Boolean {
         require(input.canonicalFile != output.canonicalFile) {
             "Input and output files must be different"
         }

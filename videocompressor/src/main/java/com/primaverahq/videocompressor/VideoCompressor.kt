@@ -36,7 +36,7 @@ import com.primaverahq.videocompressor.settings.EncoderSelectionMode
 import com.primaverahq.videocompressor.utils.CompressorUtils
 import com.primaverahq.videocompressor.utils.CompressorUtils.findTrack
 import com.primaverahq.videocompressor.utils.CompressorUtils.setUpMP4Movie
-import com.primaverahq.videocompressor.utils.StreamableVideo
+import com.primaverahq.videocompressor.utils.FastStartOptimizer
 import com.primaverahq.videocompressor.utils.getIntegerCompat
 import com.primaverahq.videocompressor.video.InputSurface
 import com.primaverahq.videocompressor.video.MP4Builder
@@ -60,7 +60,7 @@ class VideoCompressor private constructor(private val input: File) {
         }
         if (settings.streamableOnly) {
             withContext(Dispatchers.IO) {
-                StreamableVideo.start(input, output)
+                FastStartOptimizer.optimize(input, output)
             }
             return@runAsResult
         }
@@ -332,7 +332,7 @@ class VideoCompressor private constructor(private val input: File) {
         output: File
     ) = withContext(Dispatchers.IO) {
         if (settings.streamable)
-            StreamableVideo.start(cache, output)
+            FastStartOptimizer.optimize(cache, output)
         else
             cache.copyTo(output)
 
